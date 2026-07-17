@@ -56,7 +56,37 @@ def update(params, grads, lr):
     return params
 
 
-def train(X, y, params, lr=0.5, epochs=2000):
+def aggregate():
+    print("Would grow here.")
+
+def reduce(params):
+    W1, b1 = params["W1"], params["b1"]
+    W2, b2 = params["W2"], params["b2"]
+
+    i = np.argmin(np.abs(params["W2"]))
+    W1 = np.delete(W1, i, axis=1)
+    b1 = np.delete(b1, i, axis=1)
+    W2 = np.delete(W2, i, axis=0)
+
+    return {"W1": W1, "b1": b1, "W2": W2, "b2": b2}
+
+def optimize(params, X, y, baseline_loss, tolerance = 0.02):
+    while params["W2"].shape[0] > 1:
+        trial =  reduce(params)
+        trial = train(X, y, trial, epochs=1000)
+        A2, _ = forward(X, trial)
+        new_loss = compute_loss(y, A2)
+
+        if new_loss <= baseline_loss + tolerance:
+            params = trial
+            print(f"pruned to {params["W2"].shape[0]} neurons, loss: {new_loss:.4f}")
+        else:
+            print(f"cancel pruning: cut couldn't recover. new_loss: {new_loss:.4f}")
+            break
+        print(f"final shape: {params["W2"].shape[0]}")
+    return params
+
+def train(X, y, params, lr=0.5, epochs=4000):
     for i in range(epochs):
         A2, cache = forward(X, params)
         loss = compute_loss(y, A2)
@@ -70,7 +100,7 @@ def train(X, y, params, lr=0.5, epochs=2000):
 
 def evaluate(X, y, params):
     A2, cache = forward(X, params)
-    predictions = np.where(A2 >= 0.5, 1, 0)
+    predictions = np.where(A2 >= 0.2, 1, 0)
 
     print(classification_report(y, predictions))
 
@@ -87,6 +117,11 @@ if __name__ == "__main__":
     A2, cache = forward(X_train, params)
     print("starting loss:", compute_loss(y_train, A2))
     params = train(X_train, y_train, params)
+    A2, _ = forward(X_train, params)
+    baseline_loss = compute_loss(y_train, A2)
+    print(f"baseline loss: {baseline_loss:.4f}")
     print("train accuracy:", evaluate(X_train, y_train, params), "%")
-    X_test, y_test = load_data("spect_test.txt")
-    print("test accuracy:", evaluate(X_test, y_test, params), "%")
+    # X_test, y_test = load_data("spect_test.txt")
+    # print("test accuracy:", evaluate(X_test, y_test, params), "%")
+
+    optimize(params, X_train, y_train, baseline_loss)
