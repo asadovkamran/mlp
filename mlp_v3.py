@@ -2,6 +2,10 @@
 
 import numpy as np
 from sklearn.metrics import classification_report
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.metrics import f1_score
+from sklearn.datasets import make_moons
+from sklearn.preprocessing import StandardScaler
 
 def load_data(path):
     data = np.genfromtxt(path, delimiter=',')
@@ -55,9 +59,33 @@ def update(params, grads, lr):
 
     return params
 
+def cross_validate(X, y, n_hidden, k=5, epochs=2000):
+    skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=0)
+    scores = []
 
-def aggregate():
-    print("Would grow here.")
+    for train_idx, val_idx in skf.split(X, y.ravel()):
+        X_tr, y_tr = X[train_idx], y[train_idx]
+        X_val, y_val = X[val_idx], y[val_idx]
+
+        params = init_params(n_hidden=n_hidden)
+        params_trained = train(X_tr, y_tr, params)
+        A2, _ = forward(X_val, params_trained)
+        pred = np.where(A2 >= 0.5, 1, 0)
+        scores.append(f1_score(y_val.ravel(), pred.ravel(), average='macro', zero_division=0))
+        
+
+    return np.mean(scores), np.std(scores)
+
+def aggregate(params):
+    W1, b1 = params["W1"], params["b1"]
+    W2, b2 = params["W2"], params["b2"]
+
+    rng = np.random.default_rng()
+    W1 = np.column_stack((W1, rng.uniform(-0.01, 0.01, size=(W1.shape[0], 1))))
+    b1 = np.hstack((b1, np.zeros((1, 1))))
+    W2 = np.vstack((W2, np.zeros((1, 1))))
+
+    return {"W1": W1, "b1": b1, "W2": W2, "b2": b2}
 
 def reduce(params):
     W1, b1 = params["W1"], params["b1"]
@@ -84,6 +112,27 @@ def optimize(params, X, y, baseline_loss, tolerance = 0.02):
             print(f"cancel pruning: cut couldn't recover. new_loss: {new_loss:.4f}")
             break
         print(f"final shape: {params["W2"].shape[0]}")
+
+    return params
+
+def grow(params, X, y, max_neurons=20, min_improvement=0.002):
+    A2, _ = forward(X, params)
+    current_loss = compute_loss(y, A2)
+
+    while params["W2"].shape[0] < max_neurons:
+        trial = aggregate(params)
+        trial = train(X, y, trial, epochs=5000)
+        A2, _ = forward(X, trial)
+        new_loss = compute_loss(y, A2)
+
+        if new_loss < current_loss - min_improvement:
+            params = trial
+            current_loss = new_loss
+            print(f"grew to {params['W2'].shape[0]} neurons, loss: {new_loss:.4f}")
+        else:
+            print(f"stopping: extra neuron didn't help. loss: {new_loss:.4f}")
+            break
+
     return params
 
 def train(X, y, params, lr=0.5, epochs=4000):
@@ -92,9 +141,6 @@ def train(X, y, params, lr=0.5, epochs=4000):
         loss = compute_loss(y, A2)
         gradients = backward(X, y, cache, params)
         params = update(params, gradients, lr)
-
-        if  i % 100 == 0:
-            print(f"epoch {i} loss {loss}")
 
     return params
 
@@ -107,21 +153,41 @@ def evaluate(X, y, params):
     return np.mean(predictions == y) * 100
 
 if __name__ == "__main__":
-    X_train, y_train = load_data("spect_train.txt")
-    print("X_train shape:", X_train.shape)
-    print("y_train shape:", y_train.shape) 
-    values, counts = np.unique(y_train, return_counts=True)
-    print("label balance:", dict(zip(values.astype(int), counts)))
+    # X_train, y_train = load_data("spect_train.txt")
+    # X_test, y_test = load_data("spect_test.txt")
+    # print("X_train shape:", X_train.shape)
+    # print("y_train shape:", y_train.shape) 
+    # values, counts = np.unique(y_train, return_counts=True)
+    # print("label balance:", dict(zip(values.astype(int), counts)))
 
-    params = init_params()
-    A2, cache = forward(X_train, params)
-    print("starting loss:", compute_loss(y_train, A2))
-    params = train(X_train, y_train, params)
-    A2, _ = forward(X_train, params)
-    baseline_loss = compute_loss(y_train, A2)
-    print(f"baseline loss: {baseline_loss:.4f}")
-    print("train accuracy:", evaluate(X_train, y_train, params), "%")
+    X, y = make_moons(n_samples=300, noise=0.2, random_state=0)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=0)
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+    y_train = y_train.reshape(-1, 1)
+    y_test = y_test.reshape(-1, 1)
+
+    params = train(X_train, y_train, init_params(n_input=2, n_hidden=1))
+    params = grow(params, X_train, y_train)
+    print("test acc:", evaluate(X_test, y_test, params))
+
+    # params = init_params()
+    # A2, cache = forward(X_train, params)
+    # print("starting loss:", compute_loss(y_train, A2))
+    # params = train(X_train, y_train, params)
+    # A2, _ = forward(X_train, params)
+    # baseline_loss = compute_loss(y_train, A2)
+    # print(f"baseline loss: {baseline_loss:.4f}")
+    # print("train accuracy:", evaluate(X_train, y_train, params), "%")
     # X_test, y_test = load_data("spect_test.txt")
     # print("test accuracy:", evaluate(X_test, y_test, params), "%")
 
-    optimize(params, X_train, y_train, baseline_loss)
+    # optimize(params, X_train, y_train, baseline_loss)
+
+    # print("Cross validation")
+    # for nh in [1, 2, 3, 4, 5, 6, 8]:
+    #     mean, std = cross_validate(X_train, y_train, n_hidden=nh)
+    #     print(f"{nh} neurons: macro-F1 {mean:.3f} ± {std:.3f}")
